@@ -1,0 +1,5 @@
+* About
+
+[[http://www.buildyourownlisp.com/][Build Your Own Lisp]]
+
+Work on Linux environment
