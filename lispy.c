@@ -27,6 +27,8 @@ void add_history(char* unused) {}
 #include <editline/history.h>
 #endif
 
+/*** definitions ***/
+
 enum lvalType {
     LVAL_NUM,
     LVAL_ERR,
@@ -43,8 +45,13 @@ typedef struct lval {
     struct lval** cell;
 } lval;
 
-// prototypes
+/*** prototypes ***/
+
 void lval_expr_print(lval* v, char open, char close);
+lval* lval_eval(lval* v);
+lval* lval_pop(lval* v, int i);
+lval* lval_take(lval* v, int i);
+lval* builtin_op(lval* a, char* op);
 
 // create a number lval
 lval* lval_num(long x) {
@@ -58,8 +65,8 @@ lval* lval_num(long x) {
 lval* lval_err(char* s) {
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_ERR;
-    v->sym = malloc(strlen(s) + 1);
-    strcpy(v->sym, s);
+    v->err = malloc(strlen(s) + 1);
+    strcpy(v->err, s);
     return v;
 }
 
@@ -141,6 +148,98 @@ lval* lval_read(mpc_ast_t* t) {
     return x;
 }
 
+lval* lval_eval_sexpr(lval* v) {
+
+    for (int i = 0; i < v->count; i++) {
+        v->cell[i] = lval_eval(v->cell[i]);
+    }
+
+    // error checking
+    for (int i = 0; i < v->count; i++) {
+        if (v->cell[i]->type == LVAL_ERR) return lval_take(v, i);
+    }
+
+    if (v->count == 0) return v;
+    if (v->count == 1) return lval_take(v, 0);
+
+    // ensure first element is symbol
+    lval* f = lval_pop(v, 0);
+    if (f->type != LVAL_SYM) {
+        lval_del(f);
+        lval_del(v);
+        return lval_err("S-expression does not start with symbol");
+    }
+
+    lval* result = builtin_op(v, f->sym);
+    lval_del(f);
+    return result;
+}
+
+lval* lval_eval(lval* v) {
+    if (v->type == LVAL_SEXPR) {
+        return lval_eval_sexpr(v);
+    } else {
+        return v;
+    }
+}
+
+// extracts a single element from a s-expression
+// and keep the rest elements
+lval* lval_pop(lval* v, int i) {
+    lval* x = v->cell[i];
+    memmove(&v->cell[i], &v->cell[i+1], sizeof(lval*) * (v->count-i-1));
+    v->count--;
+    v->cell = realloc(v->cell, sizeof(lval*) * v->count);
+    return x;
+}
+
+// extracts a single element from a s-expression
+// then delete the whole list
+lval* lval_take(lval* v, int i) {
+    lval* x = lval_pop(v, i);
+    lval_del(v);
+    return x;
+}
+
+lval* builtin_op(lval* a, char* op) {
+
+    for (int i = 0; i < a->count; ++i) {
+        if (a->cell[i]->type != LVAL_NUM) {
+            lval_del(a);
+            return lval_err("Cannot operate on non-number!");
+        }
+    }
+
+    lval* x = lval_pop(a, 0);
+
+    // unary operator
+    if((strcmp(op, "-") == 0) && a->count == 0) {
+        x->num = -x->num;
+    }
+
+    while (a->count > 0) {
+        lval* y = lval_pop(a, 0);
+
+        if (strcmp(op, "+") == 0) x->num += y->num;
+        if (strcmp(op, "-") == 0) x->num -= y->num;
+        if (strcmp(op, "*") == 0) x->num *= y->num;
+        if (strcmp(op, "/") == 0) {
+            if (y->num == 0) {
+                lval_del(x);
+                lval_del(y);
+                x = lval_err("Division By Zero!");
+                break;
+            }
+            x->num /= y->num;
+        }
+
+        lval_del(y);
+    }
+
+    lval_del(a);
+    return x;
+}
+
 void lval_print(lval* v) {
     switch (v->type) {
     case LVAL_NUM:
@@ -174,47 +273,6 @@ void lval_println(lval* v) {
     putchar('\n');
 }
 
-/*
-lval eval_op(lval x, char* op, lval y) {
-
-    // if either value is error, return error
-    if (x.type == LVAL_ERR) return x;
-    if (y.type == LVAL_ERR) return y;
-
-    // do math operations
-    if (strcmp(op, "+") == 0) return lval_num(x.num + y.num);
-    if (strcmp(op, "-") == 0) return lval_num(x.num - y.num);
-    if (strcmp(op, "*") == 0) return lval_num(x.num * y.num);
-    if (strcmp(op, "/") == 0) {
-        return y.num == 0
-            ? lval_err(LERR_DIV_ZERO)
-            : lval_num(x.num / y.num);
-    }
-
-    return lval_err(LERR_BAD_OP);
-}
-
-lval eval(mpc_ast_t* t) {
-
-    if (strstr(t->tag, "number")) {
-        errno = 0;
-        long x = strtol(t->contents, NULL, 10);
-        return errno != ERANGE ? lval_num(x) : lval_err(LERR_BAD_NUM);
-    }
-
-    char* op = t->children[1]->contents;
-    lval x = eval(t->children[2]);
-
-    int i = 3;
-    while (strstr(t->children[i]->tag, "expr")) {
-        x = eval_op(x, op, eval(t->children[i]));
-        i++;
-    }
-
-    return x;
-}
-*/
-
 int main() {
 
     // create some parsers
@@ -244,9 +302,9 @@ int main() {
 
         mpc_result_t r;
         if (mpc_parse("<stdin>", input, Lispy, &r)) {
-            lval* result = lval_read(r.output);
-            lval_println(result);
-            lval_del(result);
+            lval* x = lval_eval(lval_read(r.output));
+            lval_println(x);
+            lval_del(x);
             mpc_ast_delete(r.output);
         } else {
             mpc_err_print(r.error);
