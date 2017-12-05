@@ -27,7 +27,12 @@ void add_history(char* unused) {}
 #include <editline/history.h>
 #endif
 
-/*** definitions ***/
+/*** macro ***/
+
+#define LASSERT(args, cond, err) \
+    if (!(cond)) { lval_del(args); return lval_err(err); }
+
+/*** data ***/
 
 enum lvalType {
     LVAL_NUM,
@@ -52,7 +57,15 @@ void lval_expr_print(lval* v, char open, char close);
 lval* lval_eval(lval* v);
 lval* lval_pop(lval* v, int i);
 lval* lval_take(lval* v, int i);
+lval* builtin(lval* a, char* func);
 lval* builtin_op(lval* a, char* op);
+lval* builtin_list(lval* a);
+lval* builtin_head(lval* a);
+lval* builtin_tail(lval* a);
+lval* builtin_join(lval* a);
+lval* builtin_eval(lval* a);
+
+/*** lval operations ***/
 
 // create a number lval
 lval* lval_num(long x) {
@@ -102,18 +115,17 @@ lval* lval_qexpr(void) {
 void lval_del(lval* v) {
 
     switch(v->type) {
-    case LVAL_NUM: break;
-    case LVAL_ERR: free(v->err); break;
-    case LVAL_SYM: free(v->sym); break;
+        case LVAL_NUM: break;
+        case LVAL_ERR: free(v->err); break;
+        case LVAL_SYM: free(v->sym); break;
 
-        // If Qexpr or Sexpr then delete all elements inside
-    case LVAL_QEXPR:
-    case LVAL_SEXPR:
-        for (int i = 0; i < v->count; i++) {
-            lval_del(v->cell[i]);
-        }
-        free(v->cell);
-        break;
+        case LVAL_QEXPR:
+        case LVAL_SEXPR:
+            for (int i = 0; i < v->count; i++) {
+                lval_del(v->cell[i]);
+            }
+            free(v->cell);
+            break;
     }
 
     free(v);
@@ -179,7 +191,7 @@ lval* lval_eval_sexpr(lval* v) {
         return lval_err("S-expression does not start with symbol");
     }
 
-    lval* result = builtin_op(v, f->sym);
+    lval* result = builtin(v, f->sym);
     lval_del(f);
     return result;
 }
@@ -208,6 +220,65 @@ lval* lval_take(lval* v, int i) {
     lval* x = lval_pop(v, i);
     lval_del(v);
     return x;
+}
+
+lval* lval_join(lval* x, lval* y) {
+
+    while (y->count) {
+        x = lval_add(x, lval_pop(y, 0));
+    }
+
+    lval_del(y);
+    return x;
+}
+
+void lval_print(lval* v) {
+    switch (v->type) {
+        case LVAL_NUM:
+            printf("%li", v->num);
+            break;
+        case LVAL_ERR:
+            printf("Error: %s", v->err);
+            break;
+        case LVAL_SYM:
+            printf("%s", v->sym);
+            break;
+        case LVAL_SEXPR:
+            lval_expr_print(v, '(', ')');
+            break;
+        case LVAL_QEXPR:
+            lval_expr_print(v, '{', '}');
+            break;
+    }
+}
+
+void lval_expr_print(lval* v, char open, char close) {
+    putchar(open);
+    for (int i = 0; i < v->count; i++) {
+        lval_print(v->cell[i]);
+        if (i != (v->count-1)) {
+            putchar(' ');
+        }
+    }
+    putchar(close);
+}
+
+void lval_println(lval* v) {
+    lval_print(v);
+    putchar('\n');
+}
+
+/*** built-in operations ***/
+
+lval* builtin(lval* a, char* func) {
+    if (strcmp("list", func) == 0) return builtin_list(a);
+    if (strcmp("head", func) == 0) return builtin_head(a);
+    if (strcmp("tail", func) == 0) return builtin_tail(a);
+    if (strcmp("join", func) == 0) return builtin_join(a);
+    if (strcmp("eval", func) == 0) return builtin_eval(a);
+    if (strstr("+-*/", func)) return builtin_op(a, func);
+    lval_del(a);
+    return lval_err("Unknown Function!");
 }
 
 lval* builtin_op(lval* a, char* op) {
@@ -249,41 +320,70 @@ lval* builtin_op(lval* a, char* op) {
     return x;
 }
 
-void lval_print(lval* v) {
-    switch (v->type) {
-    case LVAL_NUM:
-        printf("%li", v->num);
-        break;
-    case LVAL_ERR:
-        printf("Error: %s", v->err);
-        break;
-    case LVAL_SYM:
-        printf("%s", v->sym);
-        break;
-    case LVAL_SEXPR:
-        lval_expr_print(v, '(', ')');
-        break;
-    case LVAL_QEXPR:
-        lval_expr_print(v, '{', '}');
-        break;
+lval* builtin_head(lval* a) {
+
+    LASSERT(a, a->count == 1,
+            "Function 'head' passed too many arguments!");
+    LASSERT(a, a->cell[0]->type == LVAL_QEXPR,
+            "Function 'head' passed incorrect types!");
+    LASSERT(a, a->cell[0]->count != 0,
+            "Function 'head' passed {}!");
+
+    lval* v = lval_take(a, 0);
+    while (v->count > 1) {
+        lval_del(lval_pop(v, 1));
     }
+    return v;
 }
 
-void lval_expr_print(lval* v, char open, char close) {
-    putchar(open);
-    for (int i = 0; i < v->count; i++) {
-        lval_print(v->cell[i]);
-        if (i != (v->count-1)) {
-            putchar(' ');
-        }
-    }
-    putchar(close);
+lval* builtin_tail(lval* a) {
+
+    LASSERT(a, a->count == 1,
+            "Function 'tail' passed too many arguments!");
+    LASSERT(a, a->cell[0]->type == LVAL_QEXPR,
+            "Function 'tail' passed incorrect types!");
+    LASSERT(a, a->cell[0]->count != 0,
+            "Function 'tail' passed {}!");
+
+    lval* v = lval_take(a, 0);
+    lval_del(lval_pop(v, 0));
+    return v;
 }
 
-void lval_println(lval* v) {
-    lval_print(v);
-    putchar('\n');
+lval* builtin_list(lval* a) {
+    a->type = LVAL_QEXPR;
+    return a;
 }
+
+lval* builtin_eval(lval* a) {
+    LASSERT(a, a->count == 1,
+            "Function 'eval' passed too many arguments");
+    LASSERT(a, a->cell[0]->type == LVAL_QEXPR,
+            "Function 'eval' passed incorrect type!");
+
+    lval* x = lval_take(a, 0);
+    x->type = LVAL_SEXPR;
+    return lval_eval(x);
+}
+
+lval* builtin_join(lval* a) {
+
+    for (int i = 0; i < a->count; i++) {
+        LASSERT(a, a->cell[i]->type == LVAL_QEXPR,
+                "Function 'join' passed incorrect type.");
+    }
+
+    lval* x = lval_pop(a, 0);
+
+    while (a->count) {
+        x = lval_join(x, lval_pop(a, 0));
+    }
+
+    lval_del(a);
+    return x;
+}
+
+/*** main ***/
 
 int main() {
 
@@ -298,7 +398,8 @@ int main() {
     //define language
     mpca_lang(MPCA_LANG_DEFAULT,
               "number   : /-?[0-9]+/ ;"
-              "symbol   : '+' | '-' | '*' | '/' ;"
+              "symbol   : \"list\" | \"head\" | \"tail\" | \"join\" | \"eval\" \
+                        | '+' | '-' | '*' | '/' ;"
               "sexpr    : '(' <expr>* ')' ; "
               "qexpr    : '{' <expr>* '}' ; "
               "expr     : <number> | <symbol> | <sexpr> | <qexpr> ;"
