@@ -76,12 +76,18 @@ lval* lval_eval(lenv* e, lval* v);
 lval* lval_pop(lval* v, int i);
 lval* lval_take(lval* v, int i);
 lval* lenv_get(lenv* e, lval* k);
+
 lval* builtin_op(lenv* e, lval* a, char* op);
 lval* builtin_list(lenv* e, lval* a);
 lval* builtin_head(lenv* e, lval* a);
 lval* builtin_tail(lenv* e, lval* a);
 lval* builtin_join(lenv* e, lval* a);
 lval* builtin_eval(lenv* e, lval* a);
+
+lval* builtin_add(lenv* e, lval* a);
+lval* builtin_sub(lenv* e, lval* a);
+lval* builtin_div(lenv* e, lval* a);
+lval* builtin_mul(lenv* e, lval* a);
 
 /*** lval operations ***/
 lval* lval_num(long x) {
@@ -114,7 +120,7 @@ lval* lval_fun(lbuiltin func) {
     return v;
 }
 
-lval* lval_sexpr(void) {
+lval* lval_sexpr() {
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_SEXPR;
     v->count = 0;
@@ -122,7 +128,7 @@ lval* lval_sexpr(void) {
     return v;
 }
 
-lval* lval_qexpr(void) {
+lval* lval_qexpr() {
     lval* v = malloc(sizeof(lval));
     v->type = LVAL_QEXPR;
     v->count = 0;
@@ -374,6 +380,27 @@ void lenv_put(lenv* e, lval* k, lval* v) {
     strcpy(e->syms[e->count - 1], k->sym);
 }
 
+void lenv_add_builtin(lenv* e, char* name, lbuiltin func) {
+    lval* k = lval_sym(name);
+    lval* v = lval_fun(func);
+    lenv_put(e, k, v);
+    lval_del(k);
+    lval_del(v);
+}
+
+void lenv_add_builtins(lenv* e) {
+    lenv_add_builtin(e, "list", builtin_list);
+    lenv_add_builtin(e, "head", builtin_head);
+    lenv_add_builtin(e, "tail", builtin_tail);
+    lenv_add_builtin(e, "eval", builtin_eval);
+    lenv_add_builtin(e, "join", builtin_join);
+
+    lenv_add_builtin(e, "+", builtin_add);
+    lenv_add_builtin(e, "-", builtin_sub);
+    lenv_add_builtin(e, "*", builtin_mul);
+    lenv_add_builtin(e, "/", builtin_div);
+}
+
 /*** built-in operations ***/
 
 lval* builtin_op(lenv* e, lval* a, char* op) {
@@ -493,25 +520,26 @@ lval* builtin_div(lenv* e, lval* a) {
   return builtin_op(e, a, "/");
 }
 
-void lenv_add_builtin(lenv* e, char* name, lbuiltin func) {
-    lval* k = lval_sym(name);
-    lval* v = lval_fun(func);
-    lenv_put(e, k, v);
-    lval_del(k);
-    lval_del(v);
-}
+lval* builtin_def(lenv* e, lval* a) {
+    LASSERT(a, a->cell[0]->type == LVAL_QEXPR,
+            "Function 'def' passed incorrect type!");
 
-void lenv_add_builtins(lenv* e) {
-    lenv_add_builtin(e, "list", builtin_list);
-    lenv_add_builtin(e, "head", builtin_head);
-    lenv_add_builtin(e, "tail", builtin_tail);
-    lenv_add_builtin(e, "eval", builtin_eval);
-    lenv_add_builtin(e, "join", builtin_join);
+    lval* syms = a->cell[0];
+    for (int i = 0; i < syms->count; i++) {
+        LASSERT(a, syms->cell[i]->type == LVAL_SYM,
+                "Function 'def' cannot define non-symbol");
+    }
 
-    lenv_add_builtin(e, "+", builtin_add);
-    lenv_add_builtin(e, "-", builtin_sub);
-    lenv_add_builtin(e, "*", builtin_mul);
-    lenv_add_builtin(e, "/", builtin_div);
+    LASSERT(a, syms->count == a->count-1,
+            "Function 'def' cannot define incorrect "
+            "number of values to symbols");
+
+    for (int i = 0; i < syms->count; i++) {
+        lenv_put(e, syms->cell[i], a->cell[i+1]);
+    }
+
+    lval_del(a);
+    return lval_sexpr();
 }
 
 /*** main ***/
@@ -530,8 +558,6 @@ int main() {
     mpca_lang(MPCA_LANG_DEFAULT,
               "number : /-?[0-9]+/ ;"
               "symbol : /[a-zA-Z0-9_+\\-*\\/\\\\=<>!&]+/ ;"
-              /* "symbol : \"list\" | \"head\" | \"tail\" | \"join\" | \"eval\" \ */
-              /*         | '+' | '-' | '*' | '/' ;" */
               "sexpr  : '(' <expr>* ')' ; "
               "qexpr  : '{' <expr>* '}' ; "
               "expr   : <number> | <symbol> | <sexpr> | <qexpr> ;"
@@ -543,6 +569,7 @@ int main() {
 
     lenv* e = lenv_new();
     lenv_add_builtins(e);
+    lenv_add_builtin(e, "def", builtin_def);
 
     while (1) {
 
