@@ -1,4 +1,4 @@
 lispy: lispy.c
-	cc mpc.c lispy.c -o lispy -ledit -lm -Wall -Wextra -pedantic -std=c99
+	cc mpc.c lispy.c -o lispy -ledit -lm -Wall -std=c99
 clean:
 	rm lispy
