@@ -97,29 +97,37 @@ lval* builtin_sub(lenv* e, lval* a);
 lval* builtin_div(lenv* e, lval* a);
 lval* builtin_mul(lenv* e, lval* a);
 
+lval* builtin_if(lenv* e, lval* a);
+lval* builtin_eq(lenv* e, lval* a);
+lval* builtin_ne(lenv* e, lval* a);
+lval* builtin_gt(lenv* e, lval* a);
+lval* builtin_lt(lenv* e, lval* a);
+lval* builtin_ge(lenv* e, lval* a);
+lval* builtin_le(lenv* e, lval* a);
+
 /*** macro ***/
 
-#define LASSERT(args, cond, fmt, ...) \
-    if (!(cond)) { \
+#define LASSERT(args, cond, fmt, ...)               \
+    if (!(cond)) {                                  \
         lval* err = lval_err(fmt, ##__VA_ARGS__);   \
-        lval_del(args); \
-        return err; \
+        lval_del(args);                             \
+        return err;                                 \
     }
 
-#define LASSERT_NUM(func, args, num) \
-    LASSERT(args, args->count == num, \
+#define LASSERT_NUM(func, args, num)                                \
+    LASSERT(args, args->count == num,                               \
             "Function '%s' passed incorrect number of arguments. "  \
-            "Got %i, Expected %i.", \
+            "Got %i, Expected %i.",                                 \
             func, args->count, num)
 
-#define LASSERT_TYPE(func, args, index, expect) \
-    LASSERT(args, args->cell[index]->type == expect, \
-            "Function '%s' passed incorrect type for argument %i. " \
-            "Got %s, Expected %s.", \
+#define LASSERT_TYPE(func, args, index, expect)                         \
+    LASSERT(args, args->cell[index]->type == expect,                    \
+            "Function '%s' passed incorrect type for argument %i. "     \
+            "Got %s, Expected %s.",                                     \
             func, index, ltype_name(args->cell[index]->type), ltype_name(expect))
 
-#define LASSERT_NOT_EMPTY(func, args, index) \
-    LASSERT(args, args->cell[index]->count != 0, \
+#define LASSERT_NOT_EMPTY(func, args, index)                            \
+    LASSERT(args, args->cell[index]->count != 0,                        \
             "Function '%s' passed {} for argument %i.", func, index);
 
 /*** lval operations ***/
@@ -583,6 +591,12 @@ void lenv_add_builtins(lenv* e) {
     lenv_add_builtin(e, "-", builtin_sub);
     lenv_add_builtin(e, "*", builtin_mul);
     lenv_add_builtin(e, "/", builtin_div);
+
+    /* Comparison Functions */
+    lenv_add_builtin(e, ">",  builtin_gt);
+    lenv_add_builtin(e, "<",  builtin_lt);
+    lenv_add_builtin(e, ">=", builtin_ge);
+    lenv_add_builtin(e, "<=", builtin_le);
 }
 
 /*** built-in operations ***/
@@ -703,19 +717,19 @@ lval* builtin_join(lenv* e, lval* a) {
 }
 
 lval* builtin_add(lenv* e, lval* a) {
-  return builtin_op(e, a, "+");
+    return builtin_op(e, a, "+");
 }
 
 lval* builtin_sub(lenv* e, lval* a) {
-  return builtin_op(e, a, "-");
+    return builtin_op(e, a, "-");
 }
 
 lval* builtin_mul(lenv* e, lval* a) {
-  return builtin_op(e, a, "*");
+    return builtin_op(e, a, "*");
 }
 
 lval* builtin_div(lenv* e, lval* a) {
-  return builtin_op(e, a, "/");
+    return builtin_op(e, a, "/");
 }
 
 lval* builtin_var(lenv* e, lval* a, char* func) {
@@ -771,6 +785,43 @@ lval* builtin_lambda(lenv* e, lval* a) {
     lval_del(a);
 
     return lval_lambda(formals, body);
+}
+
+lval* builtin_ord(lenv* e, lval* a, char* op) {
+    LASSERT_NUM(op, a, 2);
+    LASSERT_TYPE(op, a, 0, LVAL_NUM);
+    LASSERT_TYPE(op, a, 1, LVAL_NUM);
+
+    int r = 0;
+    lval* x = lval_pop(a, 0);
+    lval* y = lval_pop(a, 0);
+
+    if (strcmp(op, ">=") == 0) r = x->num >= y->num;
+    if (strcmp(op, "<=") == 0) r = x->num <= y->num;
+    if (strcmp(op, ">") == 0) r = x->num > y->num;
+    if (strcmp(op, "<") == 0) r = x->num < y->num;
+
+    lval_del(x);
+    lval_del(y);
+    lval_del(a);
+
+    return lval_num(r);
+}
+
+lval* builtin_gt(lenv* e, lval* a) {
+    return builtin_ord(e, a, ">");
+}
+
+lval* builtin_lt(lenv* e, lval* a) {
+    return builtin_ord(e, a, "<");
+}
+
+lval* builtin_ge(lenv* e, lval* a) {
+    return builtin_ord(e, a, ">=");
+}
+
+lval* builtin_le(lenv* e, lval* a) {
+    return builtin_ord(e, a, "<=");
 }
 
 /*** main ***/
